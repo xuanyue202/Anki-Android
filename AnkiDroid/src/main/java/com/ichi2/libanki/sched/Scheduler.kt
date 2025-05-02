@@ -141,8 +141,9 @@ open class Scheduler(
     open fun answerCard(
         info: CurrentQueueState,
         ease: Ease,
+        isFromQueue: Boolean = true,
     ): OpChanges =
-        col.backend.answerCard(buildAnswer(info.topCard, info.states, ease)).also {
+        col.backend.answerCard(buildAnswer(info.topCard, info.states, ease, isFromQueue)).also {
             numberOfAnswersRecorded += 1
         }
 
@@ -167,6 +168,7 @@ open class Scheduler(
         card: Card,
         states: SchedulingStates,
         ease: Ease,
+        isFromQueue: Boolean = true,
     ): CardAnswer =
         cardAnswer {
             cardId = card.id
@@ -175,6 +177,7 @@ open class Scheduler(
             rating = ratingFromEase(ease)
             answeredAtMillis = time.intTimeMS()
             millisecondsTaken = card.timeTaken(col)
+            fromQueue = isFromQueue
         }
 
     private fun ratingFromEase(ease: Ease): CardAnswer.Rating =
@@ -654,13 +657,13 @@ open class Scheduler(
      * Return the next interval for a card and ease as a string.
      *
      * For a given card and ease, this returns a string that shows when the card will be shown again when the
-     * specific ease button (AGAIN, GOOD etc.) is touched. This uses unit symbols like “s” rather than names
-     * (“second”), like Anki desktop.
+     * specific ease button (AGAIN, GOOD etc.) is touched. This uses unit symbols like "s" rather than names
+     * ("second"), like Anki desktop.
      *
      * @param context The app context, used for localization
      * @param card The card being reviewed
      * @param ease The button number (easy, good etc.)
-     * @return A string like “1 min” or “1.7 mo”
+     * @return A string like "1 min" or "1.7 mo"
      */
     open fun nextIvlStr(
         card: Card,

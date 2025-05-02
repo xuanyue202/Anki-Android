@@ -29,6 +29,7 @@ import android.database.sqlite.SQLiteQueryBuilder
 import android.net.Uri
 import android.webkit.MimeTypeMap
 import androidx.core.net.toUri
+import anki.scheduler.SchedulingContext
 import com.ichi2.anki.AnkiDroidApp
 import com.ichi2.anki.BuildConfig
 import com.ichi2.anki.CollectionManager
@@ -54,6 +55,8 @@ import com.ichi2.libanki.TemplateManager.TemplateRenderContext.TemplateRenderOut
 import com.ichi2.libanki.Utils
 import com.ichi2.libanki.exception.ConfirmModSchemaException
 import com.ichi2.libanki.exception.EmptyMediaException
+import com.ichi2.libanki.sched.Counts
+import com.ichi2.libanki.sched.CurrentQueueState
 import com.ichi2.libanki.sched.DeckNode
 import com.ichi2.libanki.utils.TimeManager
 import com.ichi2.utils.FileUtil
@@ -1149,11 +1152,60 @@ class CardContentProvider : ContentProvider() {
         timeTaken: Long,
     ) {
         try {
-            if (cardToAnswer != null) {
+            // Exit early if the card to answer is null
+            if (cardToAnswer == null) {
+                Timber.w("answerCard called with null cardToAnswer")
+                return
+            }
+
+            // Ensure timerStarted is set *before* potentially using card.timeTaken() inside buildAnswer implicitly called by scheduler.
+            if (timeTaken != -1L) {
+                cardToAnswer.timerStarted = TimeManager.time.intTimeMS() - timeTaken
+            }
+
+            Timber.d("Answering card via ContentProvider: ID=${cardToAnswer.id}, Ease=$ease, TimeTaken=$timeTaken")
+
+            // Check if the card being answered is the current card in the scheduler
+            val currentSchedCard = col.sched.card
+            if (currentSchedCard != null && currentSchedCard.id == cardToAnswer.id) {
+                // Case 1: It IS the top card. Use the existing queue state.
+                Timber.d("Answering the current top card using existing queueState.")
+
+                val queueState =
+                    col.sched.currentQueueState() ?: run {
+                        Timber.e("answerCard: Could not get currentQueueState for the current card.")
+                        return
+                    }
+
+                // Update timer on the card within the existing queueState if necessary
                 if (timeTaken != -1L) {
-                    cardToAnswer.timerStarted = TimeManager.time.intTimeMS() - timeTaken
+                    queueState.topCard.timerStarted = cardToAnswer.timerStarted
                 }
-                col.sched.answerCard(cardToAnswer, ease)
+
+                col.sched.answerCard(queueState, ease)
+            } else {
+                // Case 2: Not the top card or queue is empty. Construct the state.
+                Timber.d("Answering a specific card, not the top card, or queue is empty.")
+
+                // Get scheduling states for the specific card being answered
+                val states = col.backend.getSchedulingStates(cardToAnswer.id)
+
+                // Construct the queue state with minimal required fields
+                val queueState =
+                    CurrentQueueState(
+                        topCard = cardToAnswer,
+                        states = states,
+                        // fields below are not used in answerCard, set to default values
+                        countsIndex = Counts.Queue.NEW,
+                        context = SchedulingContext.getDefaultInstance(),
+                        counts = Counts(0, 0, 0),
+                        timeboxReached = null,
+                        learnAheadSecs = 0,
+                        customSchedulingJs = "",
+                    )
+
+                // Answer the card using the constructed state
+                col.sched.answerCard(queueState, ease, false)
             }
         } catch (e: RuntimeException) {
             Timber.e(e, "answerCard - RuntimeException on answering card")

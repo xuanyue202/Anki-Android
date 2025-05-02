@@ -1134,6 +1134,68 @@ class ContentProviderTest : InstrumentedTest() {
         assertEquals("card is now type rev", QueueType.Rev, cardAfterReview.queue)
     }
 
+    @Test
+    fun testAnswerNonTopCard() {
+        var col = col
+        // Get the top card from scheduler
+        val topCard = getFirstCardFromScheduler(col)
+        assertNotNull("Should have a top card", topCard)
+
+        // Get a non-top card
+        val nonTopNoteUri = createdNotes[1]
+        val nonTopNoteId = ContentUris.parseId(nonTopNoteUri)
+        val nonTopNote = col.getNote(nonTopNoteId)
+        val nonTopCards = nonTopNote.cards(col)
+        assertTrue("Non-top note should have cards", nonTopCards.isNotEmpty())
+        val nonTopCard = nonTopCards[0]
+
+        // Verify this is not the top card and initially in new queue
+        assertNotEquals("The chosen card should not be the top card", topCard!!.id, nonTopCard.id)
+        assertEquals("Non-top card should initially be new", QueueType.New, nonTopCard.queue)
+
+        // Prepare to answer the non-top card
+        val cr = contentResolver
+        val reviewInfoUri = FlashCardsContract.ReviewInfo.CONTENT_URI
+        val ease = Ease.EASY
+
+        val values =
+            ContentValues().apply {
+                val timeTaken: Long = 5000
+                put(FlashCardsContract.ReviewInfo.NOTE_ID, nonTopCard.nid)
+                put(FlashCardsContract.ReviewInfo.CARD_ORD, nonTopCard.ord)
+                put(FlashCardsContract.ReviewInfo.EASE, ease.value)
+                put(FlashCardsContract.ReviewInfo.TIME_TAKEN, timeTaken)
+            }
+
+        // Answer the non-top card
+        val updateCount = cr.update(reviewInfoUri, values, null, null)
+        assertEquals("Check if update returns 1", 1, updateCount)
+        try {
+            Thread.currentThread().join(500)
+        } catch (e: Exception) {
+            // do nothing
+        }
+
+        col = reopenCol()
+
+        // Verify top card remains unchanged
+        val currentTopCardAfterAnswer = col.sched.card
+
+        assertNotNull("Scheduler should still have a card", currentTopCardAfterAnswer)
+
+        if (currentTopCardAfterAnswer != null) {
+            if (currentTopCardAfterAnswer.nid != topCard.nid || currentTopCardAfterAnswer.ord != topCard.ord) {
+                fail("Next scheduled card should not changed")
+            }
+        }
+
+        // Get the card again to see updated state
+        val nonTopCardAfterAnswer = col.getCard(nonTopCard.id)
+
+        // Verify some property has changed indicating the answer was processed
+        assertEquals("card is now type rev", QueueType.Rev, nonTopCardAfterAnswer.queue)
+    }
+
     /**
      * Test burying a card through the ReviewInfo endpoint
      */
